@@ -7,10 +7,13 @@ from google.genai import types
 
 app = FastAPI()
 
-# Make sure your API key is either set in the terminal or pasted here
-api_key = os.getenv("GEMINI_API_KEY", "")
-client = genai.Client(api_key="AIzaSyDY9SrbJpioYSqEGFtGo5DT09KVG33-vIc")
+# NUCLEAR FIX: Completely renamed the variable so Render cannot use the old cached key
+api_key = os.getenv("GEMINI_LIVE_KEY", "")
+client = genai.Client(api_key=api_key)
 
+# ==========================================
+# 1. PARSE DUMP (CHATBOT) MODELS
+# ==========================================
 class BrainDumpRequest(BaseModel):
     transcript: str
 
@@ -31,7 +34,6 @@ class Project(BaseModel):
     endYear: str
     bullets: str
 
-# The upgraded schema with Conversational Reply and Skill Suggestions
 class ResumeExtraction(BaseModel):
     reply: str
     summary: str
@@ -39,6 +41,28 @@ class ResumeExtraction(BaseModel):
     experience: list[Experience]
     projects: list[Project]
     missing_fields: list[str]
+
+# ==========================================
+# 2. NEW: COVER LETTER & ANALYTICS MODELS
+# ==========================================
+class CoverLetterRequest(BaseModel):
+    job_description: str
+    vault_data: str
+
+class CoverLetterResponse(BaseModel):
+    cover_letter: str
+
+class AnalyticsRequest(BaseModel):
+    vault_data: str
+    target_role: str
+
+class AnalyticsResponse(BaseModel):
+    strengths: list[str]
+    gaps: list[str]
+
+# ==========================================
+# ENDPOINTS
+# ==========================================
 
 @app.post("/v1/ai/parse-dump")
 async def parse_brain_dump(req: BrainDumpRequest):
@@ -76,4 +100,53 @@ async def parse_brain_dump(req: BrainDumpRequest):
         
     except Exception as e:
         print(f"CRASH: {str(e)}")
+        # Safe fallback so the Android app doesn't crash if the AI fails
+        return {
+            "reply": "I'm here! Tell me about your recent projects or experience.", 
+            "summary": "", "skills_suggested": [], "experience": [], "projects": [], "missing_fields": []
+        }
+
+@app.post("/v1/ai/cover-letter")
+async def generate_cover_letter(req: CoverLetterRequest):
+    prompt = f"""
+    Write a highly professional, engaging cover letter based on this Job Description:
+    {req.job_description}
+    
+    And this user data from their Master Vault:
+    {req.vault_data}
+    """
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=CoverLetterResponse,
+                temperature=0.7
+            ),
+        )
+        return json.loads(response.text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/v1/ai/analytics")
+async def analyze_vault(req: AnalyticsRequest):
+    prompt = f"""
+    Analyze this user's profile for a '{req.target_role}' role:
+    {req.vault_data}
+    
+    Provide exactly 3 key strengths they have, and 3 missing skills/gaps they should learn or add.
+    """
+    try:
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=AnalyticsResponse,
+                temperature=0.7
+            ),
+        )
+        return json.loads(response.text)
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

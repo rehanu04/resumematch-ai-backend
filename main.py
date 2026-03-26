@@ -70,6 +70,18 @@ class AnalyticsResponse(BaseModel):
     strengths: list[str]
     gaps: list[str]
 
+class InterviewRequest(BaseModel):
+    target_role: str
+    job_description: str
+    vault_data: str
+
+class InterviewQuestion(BaseModel):
+    question: str
+    explanation: str 
+
+class InterviewResponse(BaseModel):
+    questions: list[InterviewQuestion]
+
 # ==========================================
 # 2. PDF MODELS
 # ==========================================
@@ -125,7 +137,6 @@ async def parse_brain_dump(req: BrainDumpRequest):
         return json.loads(response.text)
     except Exception as e:
         print(f"CRASH: {str(e)}")
-        # Safe fallback so the Android app doesn't crash if the AI fails
         return {"reply": "I'm here! Tell me about your recent projects or experience.", "summary": "", "skills_suggested": [], "experience": [], "projects": [], "missing_fields": []}
 
 @app.post("/v1/ai/cover-letter")
@@ -154,34 +165,83 @@ async def analyze_vault(req: AnalyticsRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/v1/ai/generate-interview")
+async def generate_interview(req: InterviewRequest):
+    prompt = f"""
+    You are an expert technical interviewer hiring for a '{req.target_role}' role.
+    Based on this Job Description:
+    {req.job_description}
+    
+    And the candidate's actual experience and projects:
+    {req.vault_data}
+    
+    Generate exactly 4 highly specific interview questions. 
+    - 2 Technical questions based on their projects/skills.
+    - 2 Behavioral/Scenario questions based on the job description.
+    For each, provide the 'question' and a brief 'explanation' of what a senior interviewer is actually looking for in the answer.
+    """
+    try:
+        client = get_ai_client()
+        response = client.models.generate_content(
+            model='gemini-2.5-flash', contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json", 
+                response_schema=InterviewResponse, 
+                temperature=0.7
+            ),
+        )
+        
+        # ✅ SAFE JSON PARSER (Strips markdown formatting if the AI goes rogue)
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:-3].strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:-3].strip()
+            
+        return json.loads(raw_text)
+    except Exception as e:
+        print(f"INTERVIEW CRASH: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ==========================================
 # 4. PDF GENERATION LOGIC & ENDPOINTS
 # ==========================================
 def _wrap(text: str, font: str, size: int, max_width: float) -> list[str]:
-    if not text: return []
+    if not text:
+        return []
     words = text.replace("\t", " ").split()
     lines, cur = [], []
     for w in words:
         trial = (" ".join(cur + [w])).strip()
-        if stringWidth(trial, font, size) <= max_width: cur.append(w)
+        if stringWidth(trial, font, size) <= max_width:
+            cur.append(w)
         else:
-            if cur: lines.append(" ".join(cur))
+            if cur:
+                lines.append(" ".join(cur))
             cur = [w]
-    if cur: lines.append(" ".join(cur))
+    if cur:
+        lines.append(" ".join(cur))
     return lines
 
 def _split_paragraphs(block: str) -> list[str]:
-    if not block: return []
+    if not block:
+        return []
     raw = block.replace("\r\n", "\n").replace("\r", "\n")
     out, buf = [], []
     for line in raw.split("\n"):
         if line.strip() == "":
-            if buf: out.append("\n".join(buf).strip()); buf = []
-        else: buf.append(line.rstrip())
-    if buf: out.append("\n".join(buf).strip())
+            if buf:
+                out.append("\n".join(buf).strip())
+                buf = []
+        else:
+            buf.append(line.rstrip())
+    if buf:
+        out.append("\n".join(buf).strip())
     return [p for p in out if p.strip()]
 
-def _is_bullet(line: str) -> bool: return line.strip().startswith(("•", "-", "*"))
+def _is_bullet(line: str) -> bool:
+    return line.strip().startswith(("•", "-", "*"))
+
 def _clean_bullet(line: str) -> str:
     s = line.strip()
     return s[1:].strip() if s.startswith(("•", "-", "*")) else s
@@ -191,7 +251,8 @@ def _dedupe(seq: list[str]) -> list[str]:
     for item in seq:
         s = item.strip()
         if s and s.lower() not in seen:
-            seen.add(s.lower()); out.append(s)
+            seen.add(s.lower())
+            out.append(s)
     return out
 
 def _tokenize_jd(text: str) -> set[str]:
@@ -206,29 +267,37 @@ def _prioritize_skills(skills: list[str], jd_text: str) -> list[str]:
 
 def _links_line(payload: ResumePdfRequest) -> str:
     parts = []
-    if payload.linkedin.strip(): parts.append(f"LinkedIn: {payload.linkedin.strip()}")
-    if payload.github.strip(): parts.append(f"GitHub: {payload.github.strip()}")
-    if payload.portfolio.strip(): parts.append(f"Portfolio: {payload.portfolio.strip()}")
+    if payload.linkedin.strip():
+        parts.append(f"LinkedIn: {payload.linkedin.strip()}")
+    if payload.github.strip():
+        parts.append(f"GitHub: {payload.github.strip()}")
+    if payload.portfolio.strip():
+        parts.append(f"Portfolio: {payload.portfolio.strip()}")
     return " • ".join(parts)
 
 def _image_reader_from_b64(raw_b64: str) -> ImageReader | None:
     raw = (raw_b64 or "").strip()
-    if not raw: return None
+    if not raw:
+        return None
     try:
-        if "," in raw and raw.startswith("data:"): raw = raw.split(",", 1)[1]
+        if "," in raw and raw.startswith("data:"):
+            raw = raw.split(",", 1)[1]
         raw = raw.replace("\n", "").replace("\r", "")
         data = base64.b64decode(raw, validate=False)
         return ImageReader(BytesIO(data))
-    except Exception: return None
+    except Exception:
+        return None
 
 def _render_block_generic(c: canvas.Canvas, title: str, block: str, x: float, y: float, maxw: float, bottom: float, body_size: int, line_gap: int, draw_section, ensure_space) -> float:
     blk = block.strip()
-    if not blk: return y
+    if not blk:
+        return y
     y = draw_section(title, y)
     paras = _split_paragraphs(blk)
     for p in paras:
         for ln in p.split("\n"):
-            if not ln.strip(): continue
+            if not ln.strip():
+                continue
             if _is_bullet(ln):
                 bullet = _clean_bullet(ln)
                 wrapped = _wrap(bullet, "Helvetica", body_size, maxw - 14)
@@ -252,102 +321,211 @@ def _render_block_generic(c: canvas.Canvas, title: str, block: str, x: float, y:
     return y
 
 def _build_ats_pdf(payload: ResumePdfRequest) -> bytes:
-    top = 54; left = 54; right = 54; bottom = 54; body_size = 10; section_size = 11; line_gap = 12; section_gap = 8
+    top = 54
+    left = 54
+    right = 54
+    bottom = 54
+    body_size = 10
+    section_size = 11
+    line_gap = 12
+    section_gap = 8
+
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=LETTER)
     width, height = LETTER
     x = left
     maxw = width - left - right
-    def reset_y() -> float: return height - top
+
+    def reset_y() -> float:
+        return height - top
+
     y = reset_y()
-    def new_page() -> float: c.showPage(); return reset_y()
+
+    def new_page() -> float:
+        c.showPage()
+        return reset_y()
+
     def ensure_space(cur_y: float, needed: float) -> float:
-        if cur_y - needed < bottom: return new_page()
+        if cur_y - needed < bottom:
+            return new_page()
         return cur_y
+
     def draw_section(title: str, cur_y: float) -> float:
         cur_y = ensure_space(cur_y, 28) - section_gap
         c.setFont("Helvetica-Bold", section_size)
         c.drawString(x, cur_y, title.upper())
         cur_y -= 6
-        c.setLineWidth(0.6); c.setStrokeGray(0.6); c.line(x, cur_y, x + maxw, cur_y); c.setStrokeGray(0)
+        c.setLineWidth(0.6)
+        c.setStrokeGray(0.6)
+        c.line(x, cur_y, x + maxw, cur_y)
+        c.setStrokeGray(0)
         return cur_y - 10
 
     full_name = (payload.first_name + " " + payload.last_name).strip() or "Resume"
-    c.setFont("Helvetica-Bold", 18); c.drawString(x, y, full_name); y -= 20
-    if payload.target_role.strip(): c.setFont("Helvetica", 11); c.drawString(x, y, payload.target_role.strip()); y -= 16
-    contact = " • ".join([p for p in [payload.email.strip(), payload.phone.strip(), payload.location.strip()] if p])
-    if contact: c.setFont("Helvetica", 9); c.setFillGray(0.15); c.drawString(x, y, contact); c.setFillGray(0); y -= 14
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(x, y, full_name)
+    y -= 20
+
+    if payload.target_role.strip():
+        c.setFont("Helvetica", 11)
+        c.drawString(x, y, payload.target_role.strip())
+        y -= 16
+
+    contact_parts = [p for p in [payload.email.strip(), payload.phone.strip(), payload.location.strip()] if p]
+    contact = " • ".join(contact_parts)
+    if contact:
+        c.setFont("Helvetica", 9)
+        c.setFillGray(0.15)
+        c.drawString(x, y, contact)
+        c.setFillGray(0)
+        y -= 14
+
     links = _links_line(payload)
     if links:
-        c.setFont("Helvetica", 9); c.setFillGray(0.15)
-        for ln in _wrap(links, "Helvetica", 9, maxw): y = ensure_space(y, 12); c.drawString(x, y, ln); y -= 12
+        c.setFont("Helvetica", 9)
+        c.setFillGray(0.15)
+        for ln in _wrap(links, "Helvetica", 9, maxw):
+            y = ensure_space(y, 12)
+            c.drawString(x, y, ln)
+            y -= 12
         c.setFillGray(0)
 
     if payload.summary.strip():
         y = draw_section("Summary", y)
         for ln in _wrap(payload.summary.strip(), "Helvetica", body_size, maxw):
-            y = ensure_space(y, line_gap + 2); c.setFont("Helvetica", body_size); c.drawString(x, y, ln); y -= line_gap
+            y = ensure_space(y, line_gap + 2)
+            c.setFont("Helvetica", body_size)
+            c.drawString(x, y, ln)
+            y -= line_gap
+
     skills = _prioritize_skills(payload.skills, payload.jd_text)
     if skills:
         y = draw_section("Skills", y)
         for ln in _wrap(", ".join(skills), "Helvetica", body_size, maxw):
-            y = ensure_space(y, line_gap + 2); c.setFont("Helvetica", body_size); c.drawString(x, y, ln); y -= line_gap
+            y = ensure_space(y, line_gap + 2)
+            c.setFont("Helvetica", body_size)
+            c.drawString(x, y, ln)
+            y -= line_gap
 
-    for title, block in [("Experience", payload.experience_text), ("Projects", payload.projects_text), ("Education", payload.education_text), ("Additional", payload.extras_text)]:
+    sections = [
+        ("Experience", payload.experience_text),
+        ("Projects", payload.projects_text),
+        ("Education", payload.education_text),
+        ("Additional", payload.extras_text)
+    ]
+    for title, block in sections:
         y = _render_block_generic(c, title, block, x, y, maxw, bottom, body_size, line_gap, draw_section, ensure_space)
+
     c.save()
     return buf.getvalue()
 
 def _build_modern_pdf(payload: ResumePdfRequest) -> bytes:
     page_w, page_h = LETTER
-    margin_x = 42; bottom = 42; header_h = 96; body_size = 10; line_gap = 12
-    title_color = colors.HexColor("#17324D"); accent_color = colors.HexColor("#2F6B8F"); soft_color = colors.HexColor("#EDF3F8"); header_color = colors.HexColor("#163047")
+    margin_x = 42
+    bottom = 42
+    header_h = 96
+    body_size = 10
+    line_gap = 12
+    title_color = colors.HexColor("#17324D")
+    accent_color = colors.HexColor("#2F6B8F")
+    soft_color = colors.HexColor("#EDF3F8")
+    header_color = colors.HexColor("#163047")
+
     buf = BytesIO()
     c = canvas.Canvas(buf, pagesize=LETTER)
     img = _image_reader_from_b64(payload.profile_image_b64)
 
     def draw_header() -> float:
-        c.setFillColor(header_color); c.rect(0, page_h - header_h, page_w, header_h, fill=1, stroke=0); c.setFillColor(colors.white)
+        c.setFillColor(header_color)
+        c.rect(0, page_h - header_h, page_w, header_h, fill=1, stroke=0)
+        c.setFillColor(colors.white)
+        
         full_name = (payload.first_name + " " + payload.last_name).strip() or "Resume"
         role = payload.target_role.strip()
-        c.setFont("Helvetica-Bold", 22); c.drawCentredString(page_w / 2, page_h - 34, full_name)
-        if role: c.setFont("Helvetica", 11); c.drawCentredString(page_w / 2, page_h - 52, role)
-        contact = " • ".join([p for p in [payload.email.strip(), payload.phone.strip(), payload.location.strip()] if p])
-        if contact: c.setFont("Helvetica", 9); c.drawCentredString(page_w / 2, page_h - 68, contact)
+        c.setFont("Helvetica-Bold", 22)
+        c.drawCentredString(page_w / 2, page_h - 34, full_name)
+        
+        if role:
+            c.setFont("Helvetica", 11)
+            c.drawCentredString(page_w / 2, page_h - 52, role)
+            
+        contact_parts = [p for p in [payload.email.strip(), payload.phone.strip(), payload.location.strip()] if p]
+        contact = " • ".join(contact_parts)
+        if contact:
+            c.setFont("Helvetica", 9)
+            c.drawCentredString(page_w / 2, page_h - 68, contact)
+            
         links = _links_line(payload)
-        if links: c.setFont("Helvetica", 8); c.drawCentredString(page_w / 2, page_h - 80, links[:150])
+        if links:
+            c.setFont("Helvetica", 8)
+            c.drawCentredString(page_w / 2, page_h - 80, links[:150])
+            
         if img is not None:
             try:
-                img_size = 56; img_x = page_w - margin_x - img_size - 10; img_y = page_h - header_h + 20
-                c.saveState(); path = c.beginPath(); path.circle(img_x + img_size/2, img_y + img_size/2, img_size/2); c.clipPath(path, stroke=0)
-                c.drawImage(img, img_x, img_y, width=img_size, height=img_size, preserveAspectRatio=True); c.restoreState()
-            except Exception: pass
+                img_size = 56
+                img_x = page_w - margin_x - img_size - 10
+                img_y = page_h - header_h + 20
+                c.saveState()
+                path = c.beginPath()
+                path.circle(img_x + img_size/2, img_y + img_size/2, img_size/2)
+                c.clipPath(path, stroke=0)
+                c.drawImage(img, img_x, img_y, width=img_size, height=img_size, preserveAspectRatio=True)
+                c.restoreState()
+            except Exception:
+                pass
         return page_h - header_h - 18
 
     y = draw_header()
     maxw = page_w - (margin_x * 2)
     x = margin_x
-    def new_page() -> float: c.showPage(); return draw_header()
-    def ensure_space(cur_y: float, needed: float) -> float: return new_page() if cur_y - needed < bottom else cur_y
+
+    def new_page() -> float:
+        c.showPage()
+        return draw_header()
+
+    def ensure_space(cur_y: float, needed: float) -> float:
+        if cur_y - needed < bottom:
+            return new_page()
+        return cur_y
+
     def draw_section(title: str, cur_y: float) -> float:
         cur_y = ensure_space(cur_y - 14, 35)
-        c.setFillColor(soft_color); c.roundRect(x, cur_y - 6, maxw, 20, 8, fill=1, stroke=0)
-        c.setFillColor(accent_color); c.rect(x + 8, cur_y - 2, 4, 12, fill=1, stroke=0)
-        c.setFillColor(title_color); c.setFont("Helvetica-Bold", 11); c.drawString(x + 18, cur_y + 1, title.upper())
+        c.setFillColor(soft_color)
+        c.roundRect(x, cur_y - 6, maxw, 20, 8, fill=1, stroke=0)
+        c.setFillColor(accent_color)
+        c.rect(x + 8, cur_y - 2, 4, 12, fill=1, stroke=0)
+        c.setFillColor(title_color)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(x + 18, cur_y + 1, title.upper())
         c.setFillColor(colors.black)
         return cur_y - 18
 
     if payload.summary.strip():
         y = draw_section("Summary", y)
-        for ln in _wrap(payload.summary.strip(), "Helvetica", body_size, maxw): y = ensure_space(y, line_gap + 2); c.setFont("Helvetica", body_size); c.drawString(x, y, ln); y -= line_gap
+        for ln in _wrap(payload.summary.strip(), "Helvetica", body_size, maxw):
+            y = ensure_space(y, line_gap + 2)
+            c.setFont("Helvetica", body_size)
+            c.drawString(x, y, ln)
+            y -= line_gap
 
     skills = _prioritize_skills(payload.skills, payload.jd_text)
     if skills:
         y = draw_section("Core Skills", y)
-        for ln in _wrap(" • ".join(skills), "Helvetica", body_size, maxw): y = ensure_space(y, line_gap + 2); c.setFont("Helvetica", body_size); c.drawString(x, y, ln); y -= line_gap
+        for ln in _wrap(" • ".join(skills), "Helvetica", body_size, maxw):
+            y = ensure_space(y, line_gap + 2)
+            c.setFont("Helvetica", body_size)
+            c.drawString(x, y, ln)
+            y -= line_gap
 
-    for title, block in [("Experience", payload.experience_text), ("Projects", payload.projects_text), ("Education", payload.education_text), ("Additional", payload.extras_text)]:
+    sections = [
+        ("Experience", payload.experience_text),
+        ("Projects", payload.projects_text),
+        ("Education", payload.education_text),
+        ("Additional", payload.extras_text)
+    ]
+    for title, block in sections:
         y = _render_block_generic(c, title, block, x, y, maxw, bottom, body_size, line_gap, draw_section, ensure_space)
+
     c.save()
     return buf.getvalue()
 

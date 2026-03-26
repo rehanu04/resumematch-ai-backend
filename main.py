@@ -4,7 +4,8 @@ import base64
 import re
 from io import BytesIO
 
-from fastapi import FastAPI, HTTPException, Header
+# ✅ FIXED: Added UploadFile, File, and Form back to the imports!
+from fastapi import FastAPI, HTTPException, Header, UploadFile, File, Form
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from google import genai
@@ -46,7 +47,6 @@ class Project(BaseModel):
     endYear: str
     bullets: str
 
-# ✨ FIXED: Added Personal Info Fields so the AI remembers your name/about!
 class ResumeExtraction(BaseModel):
     reply: str
     first_name: str = Field(default="")
@@ -107,12 +107,84 @@ class InterviewFeedbackResponse(BaseModel):
     technical_feedback: str
     improvement_areas: list[str]
 
+# ✅ RESTORED: The Response Model for Resume Analysis
+class AnalyzeResponse(BaseModel):
+    score: int
+    matched_count: int
+    missing_count: int
+    matched_top: list[str]
+    missing_top: list[str]
+
 # ==========================================
 # 3. AI ENDPOINTS
 # ==========================================
+
+# ✨ RESTORED: The Core Resume Match Endpoint!
+@app.post("/v1/analyze/pdf")
+async def analyze_pdf(
+    resume: UploadFile = File(...),
+    jd_text: str = Form(...),
+    debug: str = Form(default="false")
+):
+    try:
+        # 1. Parse the PDF
+        pdf_bytes = await resume.read()
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(BytesIO(pdf_bytes))
+        except ImportError:
+            import PyPDF2
+            reader = PyPDF2.PdfReader(BytesIO(pdf_bytes))
+            
+        resume_text = ""
+        for page in reader.pages:
+            extracted = page.extract_text()
+            if extracted:
+                resume_text += extracted + "\n"
+
+        # 2. Ask Gemini to analyze the match
+        prompt = f"""
+        You are an expert ATS (Applicant Tracking System) and technical recruiter.
+        Evaluate this resume against the provided Job Description.
+
+        Job Description:
+        {jd_text}
+
+        Resume Text:
+        {resume_text}
+
+        TASK:
+        1. Calculate a realistic ATS match score from 0 to 100 based on keyword overlap and role relevance.
+        2. Count the exact number of matched technical/hard skills.
+        3. Count the exact number of missing technical/hard skills.
+        4. List the top matched skills found in BOTH the resume and JD (max 20).
+        5. List the top missing skills that are in the JD but NOT in the resume (max 20).
+        """
+        
+        client = get_ai_client()
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=AnalyzeResponse,
+                temperature=0.2
+            ),
+        )
+        
+        res_dict = json.loads(response.text)
+        
+        # Inject the parsed text back so the Android app can do its local highlighter logic
+        res_dict["resume_text_length"] = len(resume_text)
+        res_dict["resume_text"] = resume_text
+
+        return res_dict
+    except Exception as e:
+        print(f"ANALYZE CRASH: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/v1/ai/parse-dump")
 async def parse_brain_dump(req: BrainDumpRequest):
-    # ✨ FIXED: Updated prompt to look for personal info
     prompt = f"""
     You are 'Rehan's Career Agent'. Your goal is to build a perfect resume through conversation.
     USER INPUT: "{req.transcript}"

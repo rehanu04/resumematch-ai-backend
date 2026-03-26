@@ -82,15 +82,29 @@ class InterviewQuestion(BaseModel):
 class InterviewResponse(BaseModel):
     questions: list[InterviewQuestion]
 
+# ✅ UPGRADED: Live Voice Models
 class LiveInterviewRequest(BaseModel):
     target_role: str
-    job_description: str  # ✅ NEW: Added JD to the model
+    job_description: str  
     vault_data: str
     chat_history: str 
     user_audio_text: str
+    current_turn: int # ✨ Tracks how long the interview has gone on
 
 class LiveInterviewResponse(BaseModel):
-    ai_reply: str # What the TTS engine will speak back to you
+    ai_reply: str 
+    is_concluded: bool # ✨ Tells the Android app to hide the mic
+
+# ✅ NEW: Feedback Models
+class InterviewFeedbackRequest(BaseModel):
+    target_role: str
+    chat_history: str
+
+class InterviewFeedbackResponse(BaseModel):
+    hireability: str
+    communication_feedback: str
+    technical_feedback: str
+    improvement_areas: list[str]
 
 # ==========================================
 # 2. PDF MODELS
@@ -201,7 +215,6 @@ async def generate_interview(req: InterviewRequest):
             ),
         )
         
-        # ✅ SAFE JSON PARSER (Strips markdown formatting if the AI goes rogue)
         raw_text = response.text.strip()
         if raw_text.startswith("```json"):
             raw_text = raw_text[7:-3].strip()
@@ -213,6 +226,7 @@ async def generate_interview(req: InterviewRequest):
         print(f"INTERVIEW CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ✅ UPGRADED: Live Voice Endpoint with Turn limits & Early Exit
 @app.post("/v1/ai/live-interview")
 async def live_interview_turn(req: LiveInterviewRequest):
     prompt = f"""
@@ -231,9 +245,17 @@ async def live_interview_turn(req: LiveInterviewRequest):
     
     YOUR INSTRUCTIONS:
     1. Act strictly as the interviewer. Do not break character.
-    2. Respond to what the candidate just said naturally.
-    3. Ask the NEXT interview question based heavily on the Job Description and their background.
-    4. CRITICAL TTS CONSTRAINT: Your response will be spoken aloud by a Text-to-Speech engine. Keep it EXTREMELY CONCISE (1 to 3 short sentences maximum). Speak like a real human.
+    2. THIS IS TURN {req.current_turn} OF 4.
+    3. IF the candidate indicates they want to end the interview early (e.g., "that's it", "I'm done", "let's conclude") OR if TURN IS 4 OR HIGHER: 
+       - You MUST conclude the interview. 
+       - Thank the candidate for their time, tell them the team will be in touch.
+       - EXPLICITLY set the 'is_concluded' JSON flag to true. 
+       - Do NOT ask any more questions.
+    4. IF the interview is NOT concluding:
+       - Respond to what the candidate just said naturally.
+       - Ask the NEXT interview question based heavily on the Job Description and their background.
+       - Keep 'is_concluded' false.
+    5. CRITICAL TTS CONSTRAINT: Keep it EXTREMELY CONCISE (1 to 3 short sentences maximum). Speak like a real human. Do not use markdown.
     """
     try:
         client = get_ai_client()
@@ -247,7 +269,6 @@ async def live_interview_turn(req: LiveInterviewRequest):
             ),
         )
         
-        # Safe JSON Parser
         raw_text = response.text.strip()
         if raw_text.startswith("```json"):
             raw_text = raw_text[7:-3].strip()
@@ -258,7 +279,44 @@ async def live_interview_turn(req: LiveInterviewRequest):
     except Exception as e:
         print(f"LIVE INTERVIEW CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# ✅ NEW: Feedback Generator Endpoint
+@app.post("/v1/ai/interview-feedback")
+async def generate_interview_feedback(req: InterviewFeedbackRequest):
+    prompt = f"""
+    You are an expert tech recruiter evaluating a candidate for a '{req.target_role}' role.
+    Review the following complete interview transcript:
+    
+    {req.chat_history}
+    
+    Generate a brutally honest, constructive feedback report.
+    - hireability: Give a brief assessment (e.g., "Strong Hire", "Needs Improvement", "Solid Candidate").
+    - communication_feedback: Did they speak clearly? Did they ramble? Were they confident?
+    - technical_feedback: Were their technical answers accurate and aligned with the role?
+    - improvement_areas: List exactly 3 specific things they must improve before a real interview.
+    """
+    try:
+        client = get_ai_client()
+        response = client.models.generate_content(
+            model='gemini-2.5-flash', 
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json", 
+                response_schema=InterviewFeedbackResponse, 
+                temperature=0.7
+            ),
+        )
         
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:-3].strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:-3].strip()
+            
+        return json.loads(raw_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 # ==========================================
 # 4. PDF GENERATION LOGIC & ENDPOINTS
 # ==========================================

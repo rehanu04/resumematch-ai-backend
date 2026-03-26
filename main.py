@@ -82,18 +82,18 @@ class InterviewQuestion(BaseModel):
 class InterviewResponse(BaseModel):
     questions: list[InterviewQuestion]
 
-# ✅ UPGRADED: Live Voice Models
+# ✅ UPGRADED: Time-Based Live Voice Models
 class LiveInterviewRequest(BaseModel):
     target_role: str
     job_description: str  
     vault_data: str
     chat_history: str 
     user_audio_text: str
-    current_turn: int # ✨ Tracks how long the interview has gone on
+    elapsed_seconds: int # ✨ NEW: Tracks actual interview time in seconds
 
 class LiveInterviewResponse(BaseModel):
     ai_reply: str 
-    is_concluded: bool # ✨ Tells the Android app to hide the mic
+    is_concluded: bool # Tells the Android app to hide the mic
 
 # ✅ NEW: Feedback Models
 class InterviewFeedbackRequest(BaseModel):
@@ -226,7 +226,7 @@ async def generate_interview(req: InterviewRequest):
         print(f"INTERVIEW CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ✅ UPGRADED: Live Voice Endpoint with Turn limits & Early Exit
+# ✅ UPGRADED: Time-Based Endpoint (5-Minute Limit)
 @app.post("/v1/ai/live-interview")
 async def live_interview_turn(req: LiveInterviewRequest):
     prompt = f"""
@@ -245,9 +245,9 @@ async def live_interview_turn(req: LiveInterviewRequest):
     
     YOUR INSTRUCTIONS:
     1. Act strictly as the interviewer. Do not break character.
-    2. THIS IS TURN {req.current_turn} OF 4.
-    3. IF the candidate indicates they want to end the interview early (e.g., "that's it", "I'm done", "let's conclude") OR if TURN IS 4 OR HIGHER: 
-       - You MUST conclude the interview. 
+    2. TIME LIMIT: This interview has a 5-minute (300 seconds) time limit. Currently, {req.elapsed_seconds} seconds have passed.
+    3. IF the candidate says they want to end early (e.g., "that's it", "I'm done") OR if elapsed_seconds >= 300: 
+       - You MUST conclude the interview gracefully. 
        - Thank the candidate for their time, tell them the team will be in touch.
        - EXPLICITLY set the 'is_concluded' JSON flag to true. 
        - Do NOT ask any more questions.

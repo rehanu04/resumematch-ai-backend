@@ -82,6 +82,16 @@ class InterviewQuestion(BaseModel):
 class InterviewResponse(BaseModel):
     questions: list[InterviewQuestion]
 
+# ✅ NEW: LIVE VOICE INTERVIEW MODELS
+class LiveInterviewRequest(BaseModel):
+    target_role: str
+    vault_data: str
+    chat_history: str # The transcript of everything said so far
+    user_audio_text: str # What the microphone just heard you say
+
+class LiveInterviewResponse(BaseModel):
+    ai_reply: str # What the TTS engine will speak back to you
+
 # ==========================================
 # 2. PDF MODELS
 # ==========================================
@@ -203,6 +213,48 @@ async def generate_interview(req: InterviewRequest):
         print(f"INTERVIEW CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/v1/ai/live-interview")
+async def live_interview_turn(req: LiveInterviewRequest):
+    prompt = f"""
+    You are a senior technical interviewer conducting a live, spoken voice interview for a '{req.target_role}' position.
+    
+    Candidate's Background:
+    {req.vault_data}
+    
+    Past Conversation History:
+    {req.chat_history}
+    
+    The Candidate just answered: "{req.user_audio_text}"
+    
+    YOUR INSTRUCTIONS:
+    1. Act strictly as the interviewer. Do not break character.
+    2. Respond to what the candidate just said naturally (validate it, ask for clarification, or pivot).
+    3. Ask the NEXT interview question based on their background.
+    4. CRITICAL TTS CONSTRAINT: Your response will be spoken aloud by a Text-to-Speech engine. Keep it EXTREMELY CONCISE (1 to 3 short sentences maximum). Do NOT use bullet points, bolding, asterisks, or markdown. Speak like a real human in a natural dialogue.
+    """
+    try:
+        client = get_ai_client()
+        response = client.models.generate_content(
+            model='gemini-2.5-flash', 
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json", 
+                response_schema=LiveInterviewResponse, 
+                temperature=0.7
+            ),
+        )
+        
+        # Safe JSON Parser
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:-3].strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:-3].strip()
+            
+        return json.loads(raw_text)
+    except Exception as e:
+        print(f"LIVE INTERVIEW CRASH: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 # ==========================================
 # 4. PDF GENERATION LOGIC & ENDPOINTS
 # ==========================================

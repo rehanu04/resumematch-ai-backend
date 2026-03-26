@@ -19,7 +19,6 @@ from reportlab.pdfgen import canvas
 
 app = FastAPI()
 
-# ✅ SAFE AI CLIENT INJECTOR: Prevents server crash on boot!
 def get_ai_client():
     key = os.getenv("GEMINI_LIVE_KEY", os.getenv("GEMINI_API_KEY", "MISSING_KEY"))
     return genai.Client(api_key=key)
@@ -47,9 +46,13 @@ class Project(BaseModel):
     endYear: str
     bullets: str
 
+# ✨ FIXED: Added Personal Info Fields so the AI remembers your name/about!
 class ResumeExtraction(BaseModel):
     reply: str
-    summary: str
+    first_name: str = Field(default="")
+    last_name: str = Field(default="")
+    target_role: str = Field(default="")
+    summary: str = Field(default="")
     skills_suggested: list[str]
     experience: list[Experience]
     projects: list[Project]
@@ -82,20 +85,18 @@ class InterviewQuestion(BaseModel):
 class InterviewResponse(BaseModel):
     questions: list[InterviewQuestion]
 
-# ✅ UPGRADED: Time-Based Live Voice Models
 class LiveInterviewRequest(BaseModel):
     target_role: str
     job_description: str  
     vault_data: str
     chat_history: str 
     user_audio_text: str
-    elapsed_seconds: int # ✨ NEW: Tracks actual interview time in seconds
+    elapsed_seconds: int 
 
 class LiveInterviewResponse(BaseModel):
     ai_reply: str 
-    is_concluded: bool # Tells the Android app to hide the mic
+    is_concluded: bool 
 
-# ✅ NEW: Feedback Models
 class InterviewFeedbackRequest(BaseModel):
     target_role: str
     chat_history: str
@@ -107,33 +108,11 @@ class InterviewFeedbackResponse(BaseModel):
     improvement_areas: list[str]
 
 # ==========================================
-# 2. PDF MODELS
-# ==========================================
-class ResumePdfRequest(BaseModel):
-    jd_text: str = Field(default="")
-    template: str = Field(default="ats")
-    first_name: str = Field(default="")
-    last_name: str = Field(default="")
-    email: str = Field(default="")
-    phone: str = Field(default="")
-    location: str = Field(default="")
-    target_role: str = Field(default="")
-    summary: str = Field(default="")
-    skills: list[str] = Field(default_factory=list)
-    experience_text: str = Field(default="")
-    projects_text: str = Field(default="")
-    education_text: str = Field(default="")
-    extras_text: str = Field(default="")
-    linkedin: str = Field(default="")
-    github: str = Field(default="")
-    portfolio: str = Field(default="")
-    profile_image_b64: str = Field(default="")
-
-# ==========================================
 # 3. AI ENDPOINTS
 # ==========================================
 @app.post("/v1/ai/parse-dump")
 async def parse_brain_dump(req: BrainDumpRequest):
+    # ✨ FIXED: Updated prompt to look for personal info
     prompt = f"""
     You are 'Rehan's Career Agent'. Your goal is to build a perfect resume through conversation.
     USER INPUT: "{req.transcript}"
@@ -142,7 +121,8 @@ async def parse_brain_dump(req: BrainDumpRequest):
     2. Write professional bullets using strong action verbs.
     3. Missing Fields: If start/end dates or company names are missing, list them in `missing_fields`.
     4. Skills: Suggest 3-5 technical skills based ONLY on the projects mentioned.
-    5. Reply (CRITICAL): Write a natural, human-like response (in the `reply` field). 
+    5. Personal Info: If the user mentions their name, target role, or 'about me'/summary details, extract them into `first_name`, `last_name`, `target_role`, and `summary`.
+    6. Reply (CRITICAL): Write a natural, human-like response (in the `reply` field). 
        - Tell the user what you saved. 
        - If dates are missing, politely ask the user to provide them. 
     Return ONLY JSON matching the schema.
@@ -161,7 +141,7 @@ async def parse_brain_dump(req: BrainDumpRequest):
         return json.loads(response.text)
     except Exception as e:
         print(f"CRASH: {str(e)}")
-        return {"reply": "I'm here! Tell me about your recent projects or experience.", "summary": "", "skills_suggested": [], "experience": [], "projects": [], "missing_fields": []}
+        return {"reply": "I'm here! Tell me about your recent projects or experience.", "first_name": "", "last_name": "", "target_role": "", "summary": "", "skills_suggested": [], "experience": [], "projects": [], "missing_fields": []}
 
 @app.post("/v1/ai/cover-letter")
 async def generate_cover_letter(req: CoverLetterRequest):
@@ -226,7 +206,6 @@ async def generate_interview(req: InterviewRequest):
         print(f"INTERVIEW CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ✅ UPGRADED: Time-Based Endpoint (5-Minute Limit)
 @app.post("/v1/ai/live-interview")
 async def live_interview_turn(req: LiveInterviewRequest):
     prompt = f"""
@@ -280,7 +259,6 @@ async def live_interview_turn(req: LiveInterviewRequest):
         print(f"LIVE INTERVIEW CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ✅ NEW: Feedback Generator Endpoint
 @app.post("/v1/ai/interview-feedback")
 async def generate_interview_feedback(req: InterviewFeedbackRequest):
     prompt = f"""

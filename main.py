@@ -82,12 +82,12 @@ class InterviewQuestion(BaseModel):
 class InterviewResponse(BaseModel):
     questions: list[InterviewQuestion]
 
-# ✅ NEW: LIVE VOICE INTERVIEW MODELS
 class LiveInterviewRequest(BaseModel):
     target_role: str
+    job_description: str  # ✅ NEW: Added JD to the model
     vault_data: str
-    chat_history: str # The transcript of everything said so far
-    user_audio_text: str # What the microphone just heard you say
+    chat_history: str 
+    user_audio_text: str
 
 class LiveInterviewResponse(BaseModel):
     ai_reply: str # What the TTS engine will speak back to you
@@ -218,6 +218,9 @@ async def live_interview_turn(req: LiveInterviewRequest):
     prompt = f"""
     You are a senior technical interviewer conducting a live, spoken voice interview for a '{req.target_role}' position.
     
+    Job Description for this specific role:
+    {req.job_description}
+    
     Candidate's Background:
     {req.vault_data}
     
@@ -228,9 +231,9 @@ async def live_interview_turn(req: LiveInterviewRequest):
     
     YOUR INSTRUCTIONS:
     1. Act strictly as the interviewer. Do not break character.
-    2. Respond to what the candidate just said naturally (validate it, ask for clarification, or pivot).
-    3. Ask the NEXT interview question based on their background.
-    4. CRITICAL TTS CONSTRAINT: Your response will be spoken aloud by a Text-to-Speech engine. Keep it EXTREMELY CONCISE (1 to 3 short sentences maximum). Do NOT use bullet points, bolding, asterisks, or markdown. Speak like a real human in a natural dialogue.
+    2. Respond to what the candidate just said naturally.
+    3. Ask the NEXT interview question based heavily on the Job Description and their background.
+    4. CRITICAL TTS CONSTRAINT: Your response will be spoken aloud by a Text-to-Speech engine. Keep it EXTREMELY CONCISE (1 to 3 short sentences maximum). Speak like a real human.
     """
     try:
         client = get_ai_client()
@@ -255,6 +258,7 @@ async def live_interview_turn(req: LiveInterviewRequest):
     except Exception as e:
         print(f"LIVE INTERVIEW CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+        
 # ==========================================
 # 4. PDF GENERATION LOGIC & ENDPOINTS
 # ==========================================

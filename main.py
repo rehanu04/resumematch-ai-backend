@@ -1,10 +1,9 @@
-﻿import os
+import os
 import json
 import base64
 import re
 from io import BytesIO
 
-# ✅ FIXED: Added UploadFile, File, and Form back to the imports!
 from fastapi import FastAPI, HTTPException, Header, UploadFile, File, Form
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
@@ -107,7 +106,6 @@ class InterviewFeedbackResponse(BaseModel):
     technical_feedback: str
     improvement_areas: list[str]
 
-# ✅ RESTORED: The Response Model for Resume Analysis
 class AnalyzeResponse(BaseModel):
     score: int
     matched_count: int
@@ -119,7 +117,6 @@ class AnalyzeResponse(BaseModel):
 # 3. AI ENDPOINTS
 # ==========================================
 
-# ✨ RESTORED: The Core Resume Match Endpoint!
 @app.post("/v1/analyze/pdf")
 async def analyze_pdf(
     resume: UploadFile = File(...),
@@ -278,58 +275,63 @@ async def generate_interview(req: InterviewRequest):
         print(f"INTERVIEW CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# ✨ OPTIMIZED LIVE INTERVIEW ENDPOINT
+import time # Ensure this is at the top of main.py!
+
 @app.post("/v1/ai/live-interview")
 async def live_interview_turn(req: LiveInterviewRequest):
     prompt = f"""
-    You are a senior technical interviewer conducting a live, spoken voice interview for a '{req.target_role}' position.
+    You are a senior technical interviewer conducting a live voice interview for a '{req.target_role}' role.
     
-    Job Description for this specific role:
-    {req.job_description}
+    JD: {req.job_description}
+    Vault: {req.vault_data}
+    History: {req.chat_history}
+    Candidate just said: "{req.user_audio_text}"
+    Elapsed Time: {req.elapsed_seconds}s (Limit: 300s).
     
-    Candidate's Background:
-    {req.vault_data}
-    
-    Past Conversation History:
-    {req.chat_history}
-    
-    The Candidate just answered: "{req.user_audio_text}"
-    
-    YOUR INSTRUCTIONS:
-    1. Act strictly as the interviewer. Do not break character.
-    2. TIME LIMIT: This interview has a 5-minute (300 seconds) time limit. Currently, {req.elapsed_seconds} seconds have passed.
-    3. IF the candidate says they want to end early (e.g., "that's it", "I'm done") OR if elapsed_seconds >= 300: 
-       - You MUST conclude the interview gracefully. 
-       - Thank the candidate for their time, tell them the team will be in touch.
-       - EXPLICITLY set the 'is_concluded' JSON flag to true. 
-       - Do NOT ask any more questions.
-    4. IF the interview is NOT concluding:
-       - Respond to what the candidate just said naturally.
-       - Ask the NEXT interview question based heavily on the Job Description and their background.
-       - Keep 'is_concluded' false.
-    5. CRITICAL TTS CONSTRAINT: Keep it EXTREMELY CONCISE (1 to 3 short sentences maximum). Speak like a real human. Do not use markdown.
+    CRITICAL RULES:
+    1. KEEP IT SHORT: Maximum 2 concise sentences. This is critical.
+    2. ALWAYS ASK A QUESTION: If the interview is continuing, respond naturally and immediately ask a relevant question.
+    3. STRICT INTERVIEWER PERSONA: If the candidate asks you to explain something or doesn't know an answer, DO NOT act like a helpful AI tutor. Act like a real senior interviewer. Give a maximum 1-sentence high-level hint to see if they know it, or politely say "Let's move on" and ask a different question. Do not spoon-feed answers!
+    4. DO NOT CONCLUDE PREMATURELY: Set 'is_concluded' to false UNLESS elapsed_seconds >= 300 OR the candidate explicitly demands to stop.
+    5. IF CONCLUDING: Set 'is_concluded' to true and say ONLY: "Let's review your scorecard." Do not promise a callback.
     """
-    try:
-        client = get_ai_client()
-        response = client.models.generate_content(
-            model='gemini-2.5-flash', 
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json", 
-                response_schema=LiveInterviewResponse, 
-                temperature=0.7
-            ),
-        )
-        
-        raw_text = response.text.strip()
-        if raw_text.startswith("```json"):
-            raw_text = raw_text[7:-3].strip()
-        elif raw_text.startswith("```"):
-            raw_text = raw_text[3:-3].strip()
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            client = get_ai_client()
+            response = client.models.generate_content(
+                model='gemini-2.5-flash', 
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json", 
+                    response_schema=LiveInterviewResponse, 
+                    temperature=0.3
+                ),
+            )
             
-        return json.loads(raw_text)
-    except Exception as e:
-        print(f"LIVE INTERVIEW CRASH: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+            raw_text = response.text.strip()
+            if raw_text.startswith("```json"):
+                raw_text = raw_text[7:-3].strip()
+            elif raw_text.startswith("```"):
+                raw_text = raw_text[3:-3].strip()
+                
+            return json.loads(raw_text)
+            
+        except Exception as e:
+            err_str = str(e)
+            print(f"LIVE INTERVIEW ATTEMPT {attempt+1} FAILED: {err_str}")
+            # If it's a 503 Overloaded error, wait 1.5 seconds and try again
+            if "503" in err_str and attempt < max_retries - 1:
+                time.sleep(1.5)
+                continue
+            
+            # If we run out of retries, return a graceful "audio glitch" response instead of crashing
+            return {
+                "ai_reply": "I'm sorry, I'm having a slight connection issue on my end. Could you please repeat your last point?", 
+                "is_concluded": False
+            }
 
 @app.post("/v1/ai/interview-feedback")
 async def generate_interview_feedback(req: InterviewFeedbackRequest):

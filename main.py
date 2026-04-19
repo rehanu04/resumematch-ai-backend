@@ -2,6 +2,7 @@ import os
 import json
 import base64
 import re
+import time
 from io import BytesIO
 
 from fastapi import FastAPI, HTTPException, Header, UploadFile, File, Form
@@ -113,6 +114,39 @@ class AnalyzeResponse(BaseModel):
     matched_top: list[str]
     missing_top: list[str]
 
+# --- Missing PDF Model Reconstructed ---
+class ResumePdfRequest(BaseModel):
+    first_name: str = ""
+    last_name: str = ""
+    target_role: str = ""
+    email: str = ""
+    phone: str = ""
+    location: str = ""
+    linkedin: str = ""
+    github: str = ""
+    portfolio: str = ""
+    summary: str = ""
+    skills: list[str] = []
+    jd_text: str = ""
+    experience_text: str = ""
+    projects_text: str = ""
+    education_text: str = ""
+    extras_text: str = ""
+    profile_image_b64: str = ""
+    template: str = "ats"
+
+# ### V5 PROACTIVE AGENTIC LOGIC: MODELS ###
+class ProactiveAnalyzeRequest(BaseModel):
+    vault_data: str
+    job_description: str
+
+class ProactiveAnalyzeResponse(BaseModel):
+    ats_score: int
+    missing_skills: list[str]
+    is_intervened: bool
+    agent_message: str
+
+
 # ==========================================
 # 3. AI ENDPOINTS
 # ==========================================
@@ -124,7 +158,6 @@ async def analyze_pdf(
     debug: str = Form(default="false")
 ):
     try:
-        # 1. Parse the PDF
         pdf_bytes = await resume.read()
         try:
             import pypdf
@@ -139,7 +172,6 @@ async def analyze_pdf(
             if extracted:
                 resume_text += extracted + "\n"
 
-        # 2. Ask Gemini to analyze the match
         prompt = f"""
         You are an expert ATS (Applicant Tracking System) and technical recruiter.
         Evaluate this resume against the provided Job Description.
@@ -170,8 +202,6 @@ async def analyze_pdf(
         )
         
         res_dict = json.loads(response.text)
-        
-        # Inject the parsed text back so the Android app can do its local highlighter logic
         res_dict["resume_text_length"] = len(resume_text)
         res_dict["resume_text"] = resume_text
 
@@ -179,6 +209,77 @@ async def analyze_pdf(
     except Exception as e:
         print(f"ANALYZE CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ### V5 PROACTIVE AGENTIC LOGIC: ENDPOINT ###
+@app.post("/v1/ai/analyze-proactive", response_model=ProactiveAnalyzeResponse)
+async def analyze_and_intercept(req: ProactiveAnalyzeRequest):
+    try:
+        # Step 1: Standard ATS extraction prompt
+        base_prompt = f"""
+        Analyze this candidate's Vault Data against the Job Description.
+        Vault: {req.vault_data}
+        JD: {req.job_description}
+        
+        Return ONLY a JSON with two keys:
+        - "ats_score": an integer from 0 to 100.
+        - "missing_skills": a list of string keywords missing from the Vault.
+        """
+        
+        client = get_ai_client()
+        response = client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=base_prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.2
+            )
+        )
+        
+        # Clean markdown formatting if present
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:-3].strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:-3].strip()
+            
+        analysis_result = json.loads(raw_text)
+        score = analysis_result.get("ats_score", 0)
+        missing_skills = analysis_result.get("missing_skills", [])
+        
+        # Step 2: The Proactive Intervention Logic
+        is_intervened = False
+        agent_message = "Your profile is a strong match. You are ready to generate the PDF."
+        
+        # If the score is too low, the AI intercepts
+        if score < 70 and len(missing_skills) > 0:
+            is_intervened = True
+            
+            intervention_prompt = f"""
+            You are the MasterR Labs Career Agent. 
+            The candidate scored a {score}% for this job. They are missing these critical skills: {', '.join(missing_skills[:5])}.
+            Write a short, proactive, encouraging 2-sentence message addressing the user. 
+            Ask them if they have any hidden experience with these missing skills that they forgot to add to their Vault.
+            """
+            
+            intervention_response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=intervention_prompt,
+                config=types.GenerateContentConfig(temperature=0.7)
+            )
+            agent_message = intervention_response.text.strip()
+            
+        return ProactiveAnalyzeResponse(
+            ats_score=score,
+            missing_skills=missing_skills,
+            is_intervened=is_intervened,
+            agent_message=agent_message
+        )
+
+    except Exception as e:
+        print(f"PROACTIVE ANALYZE CRASH: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/v1/ai/parse-dump")
 async def parse_brain_dump(req: BrainDumpRequest):
@@ -275,9 +376,6 @@ async def generate_interview(req: InterviewRequest):
         print(f"INTERVIEW CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# ✨ OPTIMIZED LIVE INTERVIEW ENDPOINT
-import time # Ensure this is at the top of main.py!
-
 @app.post("/v1/ai/live-interview")
 async def live_interview_turn(req: LiveInterviewRequest):
     prompt = f"""
@@ -322,12 +420,10 @@ async def live_interview_turn(req: LiveInterviewRequest):
         except Exception as e:
             err_str = str(e)
             print(f"LIVE INTERVIEW ATTEMPT {attempt+1} FAILED: {err_str}")
-            # If it's a 503 Overloaded error, wait 1.5 seconds and try again
             if "503" in err_str and attempt < max_retries - 1:
                 time.sleep(1.5)
                 continue
             
-            # If we run out of retries, return a graceful "audio glitch" response instead of crashing
             return {
                 "ai_reply": "I'm sorry, I'm having a slight connection issue on my end. Could you please repeat your last point?", 
                 "is_concluded": False
@@ -505,8 +601,6 @@ def _build_ats_pdf(payload: ResumePdfRequest) -> bytes:
     def reset_y() -> float:
         return height - top
 
-    y = reset_y()
-
     def new_page() -> float:
         c.showPage()
         return reset_y()
@@ -527,6 +621,7 @@ def _build_ats_pdf(payload: ResumePdfRequest) -> bytes:
         c.setStrokeGray(0)
         return cur_y - 10
 
+    y = reset_y()
     full_name = (payload.first_name + " " + payload.last_name).strip() or "Resume"
     c.setFont("Helvetica-Bold", 18)
     c.drawString(x, y, full_name)

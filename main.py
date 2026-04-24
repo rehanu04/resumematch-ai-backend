@@ -243,6 +243,14 @@ async def analyze_and_intercept(req: ProactiveAnalyzeRequest):
         elif raw_text.startswith("```"):
             raw_text = raw_text[3:-3].strip()
             
+        # --- V5 FIX: Aggressive JSON Cleaning ---
+        if not raw_text.startswith("{"):
+            match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if match:
+                raw_text = match.group(0)
+            else:
+                raise ValueError(f"AI did not return valid JSON: {raw_text}")
+            
         analysis_result = json.loads(raw_text)
         score = analysis_result.get("ats_score", 0)
         missing_skills = analysis_result.get("missing_skills", [])

@@ -82,7 +82,7 @@ async def execute_with_backoff(prompt: str, schema=None, temperature: float = 0.
         try:
             client = get_next_client()
             response = client.models.generate_content(
-                model='gemini-1.5-flash',
+                model='gemini-2.5-flash',
                 contents=prompt,
                 config=types.GenerateContentConfig(**config_args)
             )
@@ -822,7 +822,7 @@ async def tech_evaluation_stream(req: TechGateRequest, score: float, reward_r: f
     try:
         client = get_next_client()
         response_stream = client.models.generate_content_stream(
-            model='gemini-1.5-flash',
+            model='gemini-2.5-flash',
             contents=prompt
         )
         for chunk in response_stream:

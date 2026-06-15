@@ -82,7 +82,7 @@ async def execute_with_backoff(prompt: str, schema=None, temperature: float = 0.
         try:
             client = get_next_client()
             response = client.models.generate_content(
-                model='gemini-2.0-flash',
+                model='gemini-1.5-flash',
                 contents=prompt,
                 config=types.GenerateContentConfig(**config_args)
             )
@@ -386,6 +386,35 @@ async def live_interview_turn(req: LiveInterviewRequest):
         return json.loads(raw_text)
     except Exception as e:
         print(f"LIVE INTERVIEW CRASH: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/v1/gauntlet/gd-turn")
+async def gd_turn(req: LiveInterviewRequest):
+    prompt = f"""
+    You are participating in a multi-agent Group Discussion.
+    
+    {req.job_description}
+    
+    Past Conversation History:
+    {req.chat_history}
+    
+    YOUR INSTRUCTIONS:
+    1. Act strictly as the assigned persona described in the instructions. Do not break character.
+    2. Directly address the last speaker in the conversation history or the user.
+    3. Keep it EXTREMELY CONCISE (1 to 2 short sentences maximum). Speak like a real human. Do not use markdown.
+    """
+    try:
+        response = await execute_with_backoff(prompt, schema=LiveInterviewResponse, temperature=0.8)
+        
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:-3].strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:-3].strip()
+            
+        return json.loads(raw_text)
+    except Exception as e:
+        print(f"GD TURN CRASH: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/v1/ai/interview-feedback")
@@ -793,7 +822,7 @@ async def tech_evaluation_stream(req: TechGateRequest, score: float, reward_r: f
     try:
         client = get_next_client()
         response_stream = client.models.generate_content_stream(
-            model='gemini-2.0-flash',
+            model='gemini-1.5-flash',
             contents=prompt
         )
         for chunk in response_stream:

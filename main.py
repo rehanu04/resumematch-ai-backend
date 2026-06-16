@@ -185,6 +185,23 @@ class InterviewFeedbackResponse(BaseModel):
     technical_feedback: str
     improvement_areas: list[str]
 
+class GDScorecardRequest(BaseModel):
+    target_role: str
+    chat_history: str
+
+class GDScorecardResponse(BaseModel):
+    semantic_depth: str
+    structural_progression: str
+    pivot_agility: str
+    coaching_tips: list[str]
+
+class GDWarmupRequest(BaseModel):
+    target_role: str
+    job_description: str
+
+class GDWarmupResponse(BaseModel):
+    strategy_context: str
+
 class ResumePdfRequest(BaseModel):
     first_name: str = ""
     last_name: str = ""
@@ -433,6 +450,54 @@ async def generate_interview_feedback(req: InterviewFeedbackRequest):
     """
     try:
         response = await execute_with_backoff(prompt, schema=InterviewFeedbackResponse, temperature=0.7)
+        
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:-3].strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:-3].strip()
+            
+        return json.loads(raw_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/v1/gauntlet/gd-warmup")
+async def gd_warmup(req: GDWarmupRequest):
+    prompt = f"""
+    You are an AI preparing for a Group Discussion.
+    Your role is: {req.target_role}.
+    The topic is: {req.job_description}.
+
+    Extract 5-6 core structural arguments that align perfectly with your stance (Risk, Growth, or Execution Cost). 
+    Do NOT output a conversational response. ONLY output the raw, hidden strategic context that you will use to inform your arguments later.
+    """
+    try:
+        response = await execute_with_backoff(prompt, schema=GDWarmupResponse, temperature=0.7)
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:-3].strip()
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:-3].strip()
+        return json.loads(raw_text)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/v1/gauntlet/gd-scorecard")
+async def generate_gd_scorecard(req: GDScorecardRequest):
+    prompt = f"""
+    You are an expert tech recruiter evaluating a candidate for a '{req.target_role}' role after a group discussion.
+    Review the following complete group discussion transcript:
+    
+    {req.chat_history}
+    
+    Generate a brutally honest, constructive feedback report evaluating the candidate ('USER: REHAN').
+    - semantic_depth: Evaluate the depth and relevance of Rehan's arguments. Did they bring unique insights or just surface-level points?
+    - structural_progression: Evaluate how Rehan built their arguments over time and progressed the discussion.
+    - pivot_agility: Evaluate how Rehan reacted to other candidates. Did they bridge smoothly? Did they adapt well to counter-arguments?
+    - coaching_tips: List 3 actionable, specific tips for Rehan to improve their performance in future group discussions.
+    """
+    try:
+        response = await execute_with_backoff(prompt, schema=GDScorecardResponse, temperature=0.7)
         
         raw_text = response.text.strip()
         if raw_text.startswith("```json"):

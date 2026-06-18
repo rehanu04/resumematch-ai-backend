@@ -417,8 +417,9 @@ async def gd_turn(req: LiveInterviewRequest):
     
     YOUR INSTRUCTIONS:
     1. Act strictly as the assigned persona described in the instructions. Do not break character.
-    2. Directly address the last speaker in the conversation history or the user.
-    3. Keep it EXTREMELY CONCISE (1 to 2 short sentences maximum). Speak like a real human. Do not use markdown.
+    2. DIRECT ADDRESS: If the last speaker was [USER: REHAN], you MUST open your response by explicitly addressing "Rehan" by name within the first 4 tokens, echoing their specific point before shifting to your stance.
+    3. TONE CALIBRATION: Respect the linguistic domain specified above. Avoid mechanical boilerplate if it is a casual topic.
+    4. Keep it EXTREMELY CONCISE (1 to 2 short sentences maximum). Speak like a real human. Do not use markdown.
     """
     try:
         response = await execute_with_backoff(prompt, schema=LiveInterviewResponse, temperature=0.8)

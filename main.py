@@ -149,6 +149,11 @@ class ResumeExtraction(BaseModel):
     last_name: str = Field(default="")
     target_role: str = Field(default="")
     summary: str = Field(default="")
+    email: str = Field(default="")
+    phone: str = Field(default="")
+    linkedin: str = Field(default="")
+    github: str = Field(default="")
+    portfolio: str = Field(default="")
     skills_suggested: list[str]
     experience: list[Experience]
     projects: list[Project]
@@ -323,7 +328,7 @@ async def parse_brain_dump(req: BrainDumpRequest):
     3. Write professional bullets using strong action verbs.
     4. Missing Fields: If start/end dates or company names are missing, list them in `missing_fields`.
     5. Skills: Suggest 3-5 technical skills based ONLY on the projects mentioned.
-    5. Personal Info: If the user mentions their name, target role, or 'about me'/summary details, extract them into `first_name`, `last_name`, `target_role`, and `summary`.
+    6. Personal Info: If the user mentions their name, target role, summary, or contact links, extract them into `first_name`, `last_name`, `target_role`, `summary`, `email`, `phone`, `linkedin`, `github`, and `portfolio`.
     6. Reply (CRITICAL): Write a natural, human-like response (in the `reply` field). 
        - Tell the user what you saved. 
        - If dates are missing, politely ask the user to provide them. 

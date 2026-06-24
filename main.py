@@ -116,6 +116,7 @@ class Experience(BaseModel):
     endMonth: str
     endYear: str
     bullets: str
+    isPresent: bool = False
 
 class Project(BaseModel):
     name: str
@@ -124,6 +125,23 @@ class Project(BaseModel):
     endMonth: str
     endYear: str
     bullets: str
+    isPresent: bool = False
+
+class Education(BaseModel):
+    school: str
+    degree: str
+    year: str
+
+class Certification(BaseModel):
+    name: str
+    issuer: str
+    year: str
+    summary: str
+
+class Achievement(BaseModel):
+    title: str
+    issuer: str
+    description: str
 
 class ResumeExtraction(BaseModel):
     reply: str
@@ -134,6 +152,9 @@ class ResumeExtraction(BaseModel):
     skills_suggested: list[str]
     experience: list[Experience]
     projects: list[Project]
+    education: list[Education] = Field(default_factory=list)
+    certifications: list[Certification] = Field(default_factory=list)
+    achievements: list[Achievement] = Field(default_factory=list)
     missing_fields: list[str]
 
 class CoverLetterRequest(BaseModel):
@@ -298,9 +319,10 @@ async def parse_brain_dump(req: BrainDumpRequest):
     USER INPUT: "{req.transcript}"
     TASK:
     1. Extract Projects and Experience into the exact schema. 
-    2. Write professional bullets using strong action verbs.
-    3. Missing Fields: If start/end dates or company names are missing, list them in `missing_fields`.
-    4. Skills: Suggest 3-5 technical skills based ONLY on the projects mentioned.
+    2. Extract Education, Certifications, and Achievements into their respective schema arrays.
+    3. Write professional bullets using strong action verbs.
+    4. Missing Fields: If start/end dates or company names are missing, list them in `missing_fields`.
+    5. Skills: Suggest 3-5 technical skills based ONLY on the projects mentioned.
     5. Personal Info: If the user mentions their name, target role, or 'about me'/summary details, extract them into `first_name`, `last_name`, `target_role`, and `summary`.
     6. Reply (CRITICAL): Write a natural, human-like response (in the `reply` field). 
        - Tell the user what you saved. 

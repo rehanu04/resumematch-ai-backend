@@ -181,6 +181,7 @@ class InterviewRequest(BaseModel):
     target_role: str
     job_description: str
     vault_data: str
+    focus_mode: str = "Core & Algorithms"
 
 class InterviewQuestion(BaseModel):
     question: str
@@ -361,6 +362,7 @@ async def analyze_vault(req: AnalyticsRequest):
 
 @app.post("/v1/ai/generate-interview")
 async def generate_interview(req: InterviewRequest):
+    import time
     prompt = f"""
     You are an expert technical interviewer hiring for a '{req.target_role}' role.
     Based on this Job Description:
@@ -369,9 +371,12 @@ async def generate_interview(req: InterviewRequest):
     And the candidate's actual experience and projects:
     {req.vault_data}
     
-    Generate exactly 4 highly specific interview questions. 
-    - 2 Technical questions based on their projects/skills.
-    - 2 Behavioral/Scenario questions based on the job description.
+    Assessment Focus Mode: '{req.focus_mode}'
+    System Entropy Seed: {time.time()}
+    
+    YOUR INSTRUCTIONS:
+    Generate a dynamically randomized set of 5 to 10 highly distinct interview questions tailored specifically to the intersection of the pasted Job Description and the selected Focus track '{req.focus_mode}'.
+    It must never repeat previously surfaced question vectors sequentially.
     For each, provide the 'question' and a brief 'explanation' of what a senior interviewer is actually looking for in the answer.
     """
     try:
